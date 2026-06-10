@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>听文章</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #fff; color: #222; font: 17px/1.7 -apple-system, "PingFang SC", sans-serif;
+         max-width: 760px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 28px; margin-bottom: 8px; }
+  .sub { color: #888; margin-bottom: 28px; }
+  .row { display: flex; gap: 10px; margin-bottom: 12px; }
+  input[type=url] { flex: 1; font-size: 17px; padding: 12px 14px; border: 1.5px solid #ccc;
+                    border-radius: 10px; outline: none; }
+  input[type=url]:focus { border-color: #2563eb; }
+  button { font-size: 17px; padding: 12px 22px; border: none; border-radius: 10px;
+           background: #2563eb; color: #fff; cursor: pointer; white-space: nowrap; }
+  button:disabled { background: #9ab4ee; cursor: default; }
+  .link-btn { background: none; border: none; color: #2563eb; font-size: 15px;
+              cursor: pointer; padding: 0; text-decoration: underline; }
+  #manualBox { display: none; margin-bottom: 12px; }
+  textarea { width: 100%; height: 180px; font: 15px/1.6 inherit; padding: 12px;
+             border: 1.5px solid #ccc; border-radius: 10px; margin-top: 8px; }
+  #status { margin: 20px 0 10px; font-size: 16px; min-height: 26px; }
+  .stage { display: inline-block; margin-right: 16px; color: #bbb; }
+  .stage.on { color: #2563eb; font-weight: 600; }
+  .stage.done { color: #16a34a; }
+  .err { color: #dc2626; margin-top: 6px; }
+  #bar { display: none; height: 8px; background: #eee; border-radius: 4px; margin: 8px 0 16px; }
+  #barFill { height: 100%; width: 0; background: #2563eb; border-radius: 4px; transition: width .3s; }
+  #player_box { display: none; margin: 14px 0; padding: 18px; border: 1px solid #e5e5e5; border-radius: 14px; }
+  #player_box h2 { font-size: 20px; margin-bottom: 12px; }
+  audio { width: 100%; margin-bottom: 8px; }
+  #dl { font-size: 15px; }
+  #scriptBox { display: none; margin-top: 14px; padding: 16px 18px; border: 1px solid #e5e5e5;
+               border-radius: 14px; max-height: 420px; overflow-y: auto; }
+  #scriptBox p { margin-bottom: 10px; font-size: 15.5px; }
+  .spk { font-weight: 700; margin-right: 6px; }
+  .spkA { color: #2563eb; }
+  .spkB { color: #16a34a; }
+  h3 { font-size: 19px; margin: 36px 0 12px; }
+  .hist { display: flex; align-items: center; gap: 12px; padding: 10px 0;
+          border-bottom: 1px solid #f0f0f0; font-size: 15px; }
+  .hist .name { flex: 1; word-break: break-all; }
+  .hist .meta { color: #999; white-space: nowrap; }
+  .hist a { color: #2563eb; }
+</style>
+</head>
+<body>
+<h1>🎙️ 听文章</h1>
+<p class="sub">贴一个文章链接，两位 AI 主播聊给你听</p>
+
+<div class="row">
+  <input type="url" id="url" placeholder="https://..." autofocus>
+  <button id="go">生成</button>
+</div>
+<button class="link-btn" id="toggleManual">提取失败？直接贴正文</button>
+<div id="manualBox">
+  <textarea id="manualText" placeholder="把文章正文粘贴到这里"></textarea>
+</div>
+
+<div id="status"></div>
+<div id="bar"><div id="barFill"></div></div>
+
+<div id="player_box">
+  <h2 id="rTitle"></h2>
+  <audio id="player" controls></audio>
+  <a id="dl" download>下载 mp3</a>
+</div>
+
+<div id="scriptBox"></div>
+
+<h3>历史</h3>
+<div id="history"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const STAGES = ['提取正文', '生成对话稿', '合成语音'];
+
+let stage = -1, stageStart = 0, stageSecs = [0, 0, 0], extraInfo = '', errMsg = '';
+setInterval(renderStatus, 500);
+
+function setStage(i) {
+  if (stage >= 0 && stage < 3) stageSecs[stage] = Math.round((Date.now() - stageStart) / 1000);
+  stage = i; stageStart = Date.now(); extraInfo = ''; errMsg = '';
+  renderStatus();
+}
+function renderStatus() {
+  if (stage < 0) return;
+  const now = Math.round((Date.now() - stageStart) / 1000);
+  $('status').innerHTML = STAGES.map((s, i) => {
+    if (i < stage) return `<span class="stage done">✓ ${s} ${stageSecs[i]}s</span>`;
+    if (i === stage && stage < 3) return `<span class="stage on">⏳ ${s} ${now}s${extraInfo}</span>`;
+    if (stage === 3) return '';
+    return `<span class="stage">${s}</span>`;
+  }).join('') + (stage === 3 ? `<span class="stage done">✓ 完成，共 ${stageSecs.reduce((a,b)=>a+b)}s</span>` : '')
+    + (errMsg ? `<div class="err">${errMsg}</div>` : '');
+}
+
+function renderScript(text) {
+  const box = $('scriptBox');
+  const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+  box.style.display = 'block';
+  box.innerHTML = text.split('\n').filter(l => l.trim()).map(l => {
+    const m = l.match(/^\s*([AB])\s*[：:]\s*(.*)$/);
+    if (m) return `<p><span class="spk spk${m[1]}">${m[1] === 'A' ? '小晓' : '阿成'}</span>${m[2]}</p>`;
+    return `<p>${l}</p>`;
+  }).join('');
+  if (stick) box.scrollTop = box.scrollHeight;
+}
+
+async function postJSON(path, body) {
+  const r = await fetch(path, { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
+}
+
+async function streamScript(title, text) {
+  const r = await fetch('/api/script', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, text }) });
+  if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+  const reader = r.body.getReader(), dec = new TextDecoder();
+  let script = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    script += dec.decode(value, { stream: true });
+    renderScript(script);
+  }
+  if (script.trim().length < 50) throw new Error('对话稿生成失败');
+  return script;
+}
+
+async function streamTTS(title, script) {
+  const r = await fetch('/api/tts', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, script }) });
+  if (!r.ok) throw new Error(r.statusText);
+  const reader = r.body.getReader(), dec = new TextDecoder();
+  let buf = '', result = null;
+  $('bar').style.display = 'block';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split('\n'); buf = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const evt = JSON.parse(line);
+      if (evt.error) throw new Error(evt.error);
+      if (evt.audio_url) { result = evt; continue; }
+      extraInfo = `（第 ${evt.done}/${evt.total} 轮）`;
+      $('barFill').style.width = (evt.done / evt.total * 95) + '%';
+    }
+  }
+  if (!result) throw new Error('合成中断，未拿到音频');
+  $('barFill').style.width = '100%';
+  return result;
+}
+
+$('toggleManual').onclick = () => {
+  const box = $('manualBox');
+  box.style.display = box.style.display === 'block' ? 'none' : 'block';
+};
+
+$('go').onclick = async () => {
+  const url = $('url').value.trim();
+  const manual = $('manualText').value.trim();
+  if (!url && !manual) { alert('请输入链接或粘贴正文'); return; }
+  $('go').disabled = true;
+  $('player_box').style.display = 'none';
+  $('scriptBox').style.display = 'none';
+  $('bar').style.display = 'none'; $('barFill').style.width = '0';
+  stageSecs = [0, 0, 0];
+  try {
+    let title, text;
+    if (manual) {
+      title = '手动粘贴-' + new Date().toLocaleTimeString('zh', {hour:'2-digit',minute:'2-digit'});
+      text = manual;
+      setStage(1);
+    } else {
+      setStage(0);
+      try {
+        ({ title, text } = await postJSON('/api/extract', { url }));
+      } catch (e) {
+        errMsg = e.message + '（可点上方"直接贴正文"手动处理）';
+        $('manualBox').style.display = 'block';
+        renderStatus();
+        return;
+      }
+      setStage(1);
+    }
+    const script = await streamScript(title, text);
+    setStage(2);
+    const { audio_url } = await streamTTS(title, script);
+    setStage(3);
+    $('rTitle').textContent = title;
+    $('player').src = audio_url;
+    $('dl').href = audio_url;
+    $('player_box').style.display = 'block';
+    $('player').play().catch(() => {});
+    loadHistory();
+  } catch (e) {
+    errMsg = e.message; renderStatus();
+  } finally {
+    $('go').disabled = false;
+  }
+};
+
+async function loadHistory() {
+  const list = await (await fetch('/api/history')).json();
+  $('history').innerHTML = list.length ? list.map(h =>
+    `<div class="hist"><span class="name"><a href="${h.audio_url}" target="_blank">${h.file}</a></span>
+     <span class="meta">${h.size_mb}MB · ${h.date}</span></div>`).join('')
+    : '<p style="color:#999;font-size:15px">还没有生成过</p>';
+}
+loadHistory();
+</script>
+</body>
+</html>
