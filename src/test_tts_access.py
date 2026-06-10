@@ -5,7 +5,7 @@ from pathlib import Path
 import dashscope
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent / ".env")
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 dashscope.api_key = os.environ["DASHSCOPE_API_KEY"]
 
 TEXT = "你好，这是一条语音合成权限测试。"

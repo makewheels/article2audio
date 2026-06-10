@@ -11,12 +11,13 @@
 ```bash
 cp .env.example .env   # 填入 DASHSCOPE_API_KEY（阿里云百炼）
 uv sync
-uv run server.py       # 打开 http://localhost:8770
+uv run src/server.py   # 打开 http://localhost:8770
 ```
 
 `.env` 可调模型与音色：
 
 ```
+LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1  # 任何 OpenAI 兼容接口均可
 LLM_MODEL=qwen3.7-plus          # 对话稿模型
 TTS_MODEL=cosyvoice-v2
 TTS_VOICE_A=longxiaochun_v2     # 女主播
@@ -43,4 +44,4 @@ docker run -d --name article2audio \
 
 ## 测试 TTS 权限
 
-换 key 后可先跑 `uv run test_tts_access.py` 确认对哪些 TTS 模型有权限。
+换 key 后可先跑 `uv run src/test_tts_access.py` 确认对哪些 TTS 模型有权限。

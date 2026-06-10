@@ -25,7 +25,7 @@ def stream_script(title: str, text: str):
     """流式生成对话稿，逐段 yield 文本增量。"""
     client = OpenAI(
         api_key=os.environ["DASHSCOPE_API_KEY"],
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        base_url=os.getenv("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
     )
     stream = client.chat.completions.create(
         model=os.getenv("LLM_MODEL", "qwen3.7-plus"),

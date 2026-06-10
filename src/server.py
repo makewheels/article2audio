@@ -1,7 +1,7 @@
 """文章 URL → 语音讲解，本地网页服务。
 
 用法:
-  uv run server.py          # 打开 http://localhost:8770
+  uv run src/server.py      # 打开 http://localhost:8770
 """
 import os
 from datetime import datetime
@@ -9,7 +9,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent / ".env")
+ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(ROOT / ".env")
 
 import json
 
@@ -23,7 +24,6 @@ from extract import fetch_article
 from script_gen import stream_script
 from tts import safe_filename, synthesize_iter
 
-ROOT = Path(__file__).parent
 OUT = ROOT / "out"
 OUT.mkdir(exist_ok=True)
 
