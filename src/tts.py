@@ -67,30 +67,39 @@ def _synth_one(model: str, voice: str, text: str) -> bytes:
     raise RuntimeError(f"合成失败: {last_err}")
 
 
+def _ffmpeg(*args: str):
+    r = subprocess.run(["ffmpeg", "-y", "-v", "error", *args], capture_output=True)
+    if r.returncode:
+        raise RuntimeError(f"ffmpeg 失败({r.returncode}): {r.stderr.decode()[-400:]}")
+
+
 def _concat(parts: list[Path], out_path: Path, tmp: Path):
+    # mp3 经 concat demuxer 直接重编码，在 ffmpeg 8.x 段数多时会触发
+    # "inadequate AVFrame plane padding" 报错；先统一转 wav 拼接、最后只编码一次
     rate = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "a:0",
          "-show_entries", "stream=sample_rate", "-of", "default=nw=1:nk=1", str(parts[0])],
         check=True, capture_output=True, text=True,
     ).stdout.strip() or "22050"
-    silence = tmp / "silence.mp3"
-    subprocess.run(
-        ["ffmpeg", "-y", "-f", "lavfi", "-i", f"anullsrc=r={rate}:cl=mono",
-         "-t", str(GAP_SECONDS), "-c:a", "libmp3lame", "-b:a", "64k", str(silence)],
-        check=True, capture_output=True,
-    )
+
+    wavs = []
+    for i, p in enumerate(parts):
+        w = tmp / f"w{i:03d}.wav"
+        _ffmpeg("-i", str(p), "-ar", rate, "-ac", "1", "-c:a", "pcm_s16le", str(w))
+        wavs.append(w)
+    silence = tmp / "silence.wav"
+    _ffmpeg("-f", "lavfi", "-i", f"anullsrc=r={rate}:cl=mono",
+            "-t", str(GAP_SECONDS), "-c:a", "pcm_s16le", str(silence))
+
     concat_list = tmp / "list.txt"
     lines = []
-    for i, p in enumerate(parts):
+    for i, w in enumerate(wavs):
         if i:
             lines.append(f"file '{silence}'\n")
-        lines.append(f"file '{p}'\n")
+        lines.append(f"file '{w}'\n")
     concat_list.write_text("".join(lines))
-    subprocess.run(
-        ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
-         "-c:a", "libmp3lame", "-q:a", "2", str(out_path)],
-        check=True, capture_output=True,
-    )
+    _ffmpeg("-f", "concat", "-safe", "0", "-i", str(concat_list),
+            "-c:a", "libmp3lame", "-q:a", "2", str(out_path))
 
 
 def synthesize_iter(script: str, out_path: Path):
