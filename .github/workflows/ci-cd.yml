@@ -1,0 +1,84 @@
+name: CI / CD
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  ACR: registry.cn-beijing.aliyuncs.com
+  ACR_IMAGE: registry.cn-beijing.aliyuncs.com/b4/article2audio
+  SERVER_DIR: /opt/article2audio
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Login to ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR }}
+          username: ${{ secrets.ACR_AK_ID }}
+          password: ${{ secrets.ACR_AK_SECRET }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.ACR_IMAGE }}:latest
+            ${{ env.ACR_IMAGE }}:${{ github.sha }}
+
+      - name: Install SSH key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
+
+      - name: Sync compose
+        run: |
+          rsync -az -e "ssh -o ServerAliveInterval=30" \
+            docker-compose.yml \
+            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ env.SERVER_DIR }}/
+
+      - name: Write server .env
+        run: |
+          cat <<__ENVEOF__ | \
+            ssh -o ServerAliveInterval=30 ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            "cat > ${{ env.SERVER_DIR }}/.env"
+          DASHSCOPE_API_KEY=${{ secrets.DASHSCOPE_API_KEY }}
+          __ENVEOF__
+
+      - name: Pull and restart
+        run: |
+          H="${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}"
+
+          echo "${{ secrets.ACR_AK_SECRET }}" | \
+            ssh -o ServerAliveInterval=30 "$H" \
+            "docker login --username=${{ secrets.ACR_AK_ID }} --password-stdin ${{ env.ACR }} >/dev/null 2>&1"
+
+          ssh -o ServerAliveInterval=30 "$H" /bin/bash -s << 'PULL'
+          set -e
+          IMG=registry.cn-beijing.aliyuncs.com/b4/article2audio
+          cd /opt/article2audio
+
+          docker pull "${IMG}:latest" 2>/dev/null && \
+            docker tag "${IMG}:latest" "${IMG}:previous" || true
+
+          docker pull "${IMG}:latest"
+          docker compose down --remove-orphans 2>/dev/null || true
+          docker compose up -d --wait --wait-timeout 60
+          docker image prune -f
+          docker compose ps
+          PULL
+
+      - name: Smoke check
+        run: |
+          sleep 8
+          curl -fsS -m 15 "https://podcast.a4.fit/" | head -c 100
+          echo

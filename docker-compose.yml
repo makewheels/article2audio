@@ -1,0 +1,27 @@
+services:
+  article2audio:
+    image: registry.cn-beijing.aliyuncs.com/b4/article2audio:latest
+    container_name: article2audio
+    restart: unless-stopped
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8770
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      - LLM_MODEL=${LLM_MODEL:-qwen3.7-plus}
+      - TTS_MODEL=${TTS_MODEL:-cosyvoice-v2}
+      - TTS_VOICE_A=${TTS_VOICE_A:-longxiaochun_v2}
+      - TTS_VOICE_B=${TTS_VOICE_B:-longcheng_v2}
+    expose:
+      - "8770"
+    volumes:
+      - article2audio_out:/app/out
+    networks: [edge]
+
+networks:
+  edge:
+    external: true
+    name: edge
+
+volumes:
+  article2audio_out:
